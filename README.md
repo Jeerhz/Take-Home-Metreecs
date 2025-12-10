@@ -11,6 +11,13 @@ Data engineering coding test by metreecs. The instructions can be found in the p
 https://docs.astral.sh/uv/getting-started/installation/
 ```
 
+Then you can create virtual environment and install dependencies by running in project root folder:
+
+```bash
+uv venv .venv
+uv sync
+```
+
 2. This project needs data provided from the company Metreecs. Please download the data folder following the company instruction. Extract the .zip file in the project root. File paths should corresponds to the path in data_eng/settings.py. If not please edit the constants in this file.
 
 ## Part 1
