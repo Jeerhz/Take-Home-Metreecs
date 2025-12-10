@@ -216,3 +216,5 @@ data/
 # Remove Jupyter Notebook tests
 test.ipynb
 
+.cache.sqlite
+

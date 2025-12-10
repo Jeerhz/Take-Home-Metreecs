@@ -1,6 +1,7 @@
 import datetime
 import os
 from typing import cast
+import numpy as np
 from uuid import UUID
 import openmeteo_requests  # type: ignore
 import pandas as pd
@@ -78,9 +79,6 @@ def fetch_and_save_weather_data(
             logger.warning(f"No hourly data returned for city: {city_name}, skipping.")
             continue
 
-        time_index_utc = pd.to_datetime(hourly.Time(), unit="s", utc=True)
-        logger.debug(f"time_index_utc sample: {time_index_utc}")
-
         temp_var = hourly.Variables(0)
         precip_var = hourly.Variables(1)
         sunshine_var = hourly.Variables(2)
@@ -93,14 +91,20 @@ def fetch_and_save_weather_data(
             logger.warning(f"Missing variable data for city: {city_name}, skipping.")
             continue
 
-        temp_data = temp_var.ValuesAsNumpy()  # type: ignore
-        precip_data = precip_var.ValuesAsNumpy()  # type: ignore
-        sunshine_data = sunshine_var.ValuesAsNumpy()  # type: ignore
-        weather_code_data = weather_code_var.ValuesAsNumpy()  # type: ignore
+        # We verified that these are not None above
+        temp_data: np.ndarray = temp_var.ValuesAsNumpy()  # type: ignore
+        precip_data: np.ndarray = precip_var.ValuesAsNumpy()  # type: ignore
+        sunshine_data: np.ndarray = sunshine_var.ValuesAsNumpy()  # type: ignore
+        weather_code_data: np.ndarray = weather_code_var.ValuesAsNumpy()  # type: ignore
 
         city_df = pd.DataFrame(
             {
-                "datetime_utc": time_index_utc,
+                "datetime": pd.date_range(
+                    start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
+                    end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
+                    freq=pd.Timedelta(seconds=hourly.Interval()),
+                    inclusive="left",
+                ),
                 "location_id": str(location_id),
                 "temperature_2m": temp_data,
                 "precipitation": precip_data,
@@ -109,46 +113,31 @@ def fetch_and_save_weather_data(
             }
         )
 
-        city_df["datetime"] = city_df["datetime_utc"]
-
-        records = city_df[
-            [
-                "location_id",
-                "datetime",
-                "temperature_2m",
-                "precipitation",
-                "sunshine_duration",
-                "weather_code",
-            ]
-        ].to_dict(orient="records")
+        # We convert the dataframe to a dict and then validate each record using Pydantic
+        records: list[
+            dict[str, datetime.datetime | UUID | str | float | int | None]
+        ] = cast(
+            list[dict[str, datetime.datetime | UUID | str | float | int | None]],
+            city_df[
+                [
+                    "location_id",
+                    "datetime",
+                    "temperature_2m",
+                    "precipitation",
+                    "sunshine_duration",
+                    "weather_code",
+                ]
+            ].to_dict(orient="records"),
+        )
 
         validated_records: list[WeatherData] = []
         for record in records:
-            temp_val = cast(float | None, record.get("temperature_2m"))
-            precip_val = cast(float | None, record.get("precipitation"))
-            sunshine_val = cast(float | None, record.get("sunshine_duration"))
-            weather_code_val = cast(int | None, record.get("weather_code"))
-
-            validated = WeatherData(
-                location_id=UUID(record["location_id"]),
-                datetime=cast(datetime.datetime, record["datetime"]),
-                temperature_2m=float(temp_val)
-                if temp_val is not None and not pd.isna(temp_val)
-                else None,
-                precipitation=float(precip_val)
-                if precip_val is not None and not pd.isna(precip_val)
-                else None,
-                sunshine_duration=float(sunshine_val)
-                if sunshine_val is not None and not pd.isna(sunshine_val)
-                else None,
-                weather_code=int(weather_code_val)
-                if weather_code_val is not None and not pd.isna(weather_code_val)
-                else None,
-            )
+            validated = WeatherData(**record)  # type: ignore
             validated_records.append(validated)
 
         all_weather_records.extend([r.model_dump() for r in validated_records])
 
+    # Save all weather records to CSV using pandas
     final_weather_df = pd.DataFrame(all_weather_records)
     final_weather_df.to_csv(
         output_csv_path, index=False, date_format="%Y-%m-%d %H:%M:%S"
